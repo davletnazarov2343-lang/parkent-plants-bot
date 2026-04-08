@@ -53,6 +53,19 @@ const YIL_KB = kb([
   [["2028","Y|2028"],["2029","Y|2029"],["2030","Y|2030"]],
 ]);
 
+const MAYDON_KB = kb([
+  [["10 sotix","MD|10_sotix"],["30 sotix","MD|30_sotix"]],
+  [["50 sotix","MD|50_sotix"],["1 gektar","MD|1_gektar"]],
+  [["3 gektar","MD|3_gektar"],["5 gektar","MD|5_gektar"]],
+  [["10 gektardan ko'p","MD|10_gektar_ ortiq"],["30 gektardan ko'p","MD|30_gektar_ortiq"]],
+]);
+
+const MANBA_KB = kb([
+  [["▶️ YouTube","MB|YouTube"],["📸 Instagram","MB|Instagram"]],
+  [["👥 Facebook","MB|Facebook"],["📢 Telegram kanal","MB|Telegram"]],
+  [["🔎 Boshqa","MB|Boshqa"]],
+]);
+
 async function getS(id) { return (await kv.get(`s:${id}`)) || {}; }
 async function setS(id, data) { await kv.set(`s:${id}`, data, { ex: 3600 }); }
 async function delS(id) { await kv.del(`s:${id}`); }
@@ -63,6 +76,7 @@ module.exports = async (req, res) => {
   try {
     const body = req.body;
 
+    // /start
     if (body.message?.text === "/start") {
       const id = body.message.from.id;
       const firstName = body.message.from.first_name || "Do'st";
@@ -76,6 +90,7 @@ module.exports = async (req, res) => {
       return res.json({ ok: true });
     }
 
+    // Matn xabarlari
     if (body.message?.text && !body.message.text.startsWith("/")) {
       const id   = body.message.from.id;
       const matn = body.message.text.trim();
@@ -89,6 +104,10 @@ module.exports = async (req, res) => {
         await setS(id, { ...s, step: "meva", tuman: matn });
         await send(id, `✅ Tuman: ${matn}\n\n🌳 Qaysi meva ekmoqchisiz?`, { reply_markup: MEVA_KB });
 
+      } else if (s.step === "reja_maydon") {
+        await setS(id, { ...s, step: "manba", reja_maydon: matn });
+        await send(id, `✅ Reja: ${matn}\n\n📣 Bizni qayerdan ko'rib yozyabsiz?`, { reply_markup: MANBA_KB });
+
       } else if (s.step === "telefon") {
         const d = { ...s, telefon: matn };
         await delS(id);
@@ -100,12 +119,15 @@ module.exports = async (req, res) => {
         await send(ADMIN_ID,
           `🔔 YANGI MIJOZ ARIZASI\n` +
           `──────────────────────────\n` +
-          `👤 Ism:      ${d.ism}\n` +
-          `🏙 Viloyat:  ${d.viloyat}\n` +
-          `🏘 Tuman:    ${d.tuman}\n` +
-          `🌳 Meva:     ${d.meva}\n` +
-          `📅 Yil:      ${d.yil}\n` +
-          `📞 Telefon:  ${d.telefon}\n` +
+          `👤 Ism:         ${d.ism}\n` +
+          `🏙 Viloyat:     ${d.viloyat}\n` +
+          `🏘 Tuman:       ${d.tuman}\n` +
+          `🌳 Meva:        ${d.meva}\n` +
+          `📅 Yil:         ${d.yil}\n` +
+          `🌾 Jami maydon: ${d.maydon}\n` +
+          `🌱 Reja maydon: ${d.reja_maydon}\n` +
+          `📣 Manba:       ${d.manba}\n` +
+          `📞 Telefon:     ${d.telefon}\n` +
           `──────────────────────────\n` +
           `🆔 @${body.message.from.username || "—"} | ID: ${id}`
         );
@@ -117,6 +139,7 @@ module.exports = async (req, res) => {
       return res.json({ ok: true });
     }
 
+    // Callback tugmalar
     if (body.callback_query) {
       const cq   = body.callback_query;
       const id   = cq.from.id;
@@ -138,8 +161,18 @@ module.exports = async (req, res) => {
 
       } else if (data.startsWith("Y|")) {
         const yil = data.split("|")[1];
-        await setS(id, { ...s, step: "telefon", yil });
-        await send(id, `✅ Yil: ${yil}\n\n📞 Telefon raqamingizni yozing:\n_(+998901234567)_`);
+        await setS(id, { ...s, step: "maydon", yil });
+        await send(id, `✅ Yil: ${yil}\n\n🌾 Jami maydoningiz qancha?`, { reply_markup: MAYDON_KB });
+
+      } else if (data.startsWith("MD|")) {
+        const maydon = data.split("|")[1].replace(/_/g, " ");
+        await setS(id, { ...s, step: "reja_maydon", maydon });
+        await send(id, `✅ Maydon: ${maydon}\n\n🌱 Qancha maydonga bog' qilishni reja qilyabsiz?\n_(Masalan: 20 sotix, 2 gektar)_`);
+
+      } else if (data.startsWith("MB|")) {
+        const manba = data.split("|")[1];
+        await setS(id, { ...s, step: "telefon", manba });
+        await send(id, `✅ Manba: ${manba}\n\n📞 Telefon raqamingizni yozing:\n_(+998901234567)_`);
       }
 
       return res.json({ ok: true });
