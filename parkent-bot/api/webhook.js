@@ -1,204 +1,154 @@
-// ═══════════════════════════════════════════════════════════
-//  🌿  PARKENT PLANTS — Telegram Bot  (Vercel Serverless)
-//  Fayl: api/webhook.js
-// ═══════════════════════════════════════════════════════════
+const { kv } = require("@vercel/kv");
 
-const { Bot, session, webhookCallback, Keyboard } = require("grammy");
-const { Redis } = require("@upstash/redis");
-const { RedisAdapter } = require("@grammyjs/storage-redis");
+const TOKEN    = process.env.BOT_TOKEN;
+const ADMIN_ID = process.env.ADMIN_ID;
+const API      = `https://api.telegram.org/bot${TOKEN}`;
 
-// ─────────────────────────────────────
-// Bosqichlar (suhbat holati)
-// ─────────────────────────────────────
-const BOSQICH = {
-  ISM:     "ism",
-  VILOYAT: "viloyat",
-  TUMAN:   "tuman",
-  MEVA:    "meva",
-  YIL:     "yil",
-  TELEFON: "telefon",
-};
-
-// ─────────────────────────────────────
-// Session boshlang'ich qiymati
-// ─────────────────────────────────────
-function boshlangich() {
-  return {
-    bosqich: null,
-    ism:     "",
-    viloyat: "",
-    tuman:   "",
-    meva:    "",
-    yil:     "",
-    telefon: "",
-  };
+async function send(chat_id, text, extra = {}) {
+  await fetch(`${API}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id, text, parse_mode: "Markdown", ...extra }),
+  });
 }
 
-// ─────────────────────────────────────
-// Redis (Upstash) ulanish
-// ─────────────────────────────────────
-const redis = new Redis({
-  url:   process.env.UPSTASH_REDIS_URL,
-  token: process.env.UPSTASH_REDIS_TOKEN,
-});
+async function answer(id) {
+  await fetch(`${API}/answerCallbackQuery`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ callback_query_id: id }),
+  });
+}
 
-// ─────────────────────────────────────
-// Bot yaratish
-// ─────────────────────────────────────
-const bot = new Bot(process.env.BOT_TOKEN);
+async function deleteMsg(chat_id, mid) {
+  await fetch(`${API}/deleteMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ chat_id, message_id: mid }),
+  }).catch(() => {});
+}
 
-// Session middleware — holatni Redis da saqlaydi
-bot.use(
-  session({
-    initial: boshlangich,
-    storage: new RedisAdapter({ instance: redis }),
-  })
-);
+function kb(rows) {
+  return { inline_keyboard: rows.map(r => r.map(([t, d]) => ({ text: t, callback_data: d }))) };
+}
 
-// ═══════════════════════════════════════════════════════════
-//  /start  →  Salomlashish
-// ═══════════════════════════════════════════════════════════
-bot.command("start", async (ctx) => {
-  ctx.session = boshlangich();
-  ctx.session.bosqich = BOSQICH.ISM;
+const VILOYAT_KB = kb([
+  [["Toshkent sh.","V|Toshkent_sh"],["Toshkent vil.","V|Toshkent_vil"]],
+  [["Farg'ona","V|Fargona"],["Andijon","V|Andijon"]],
+  [["Namangan","V|Namangan"],["Samarqand","V|Samarqand"]],
+  [["Buxoro","V|Buxoro"],["Navoiy","V|Navoiy"]],
+  [["Qashqadaryo","V|Qashqa"],["Surxondaryo","V|Surxon"]],
+  [["Sirdaryo","V|Sirdaryo"],["Jizzax","V|Jizzax"]],
+  [["Xorazm","V|Xorazm"],["QQR","V|QQR"]],
+]);
 
-  await ctx.reply(
-    `🌿 *Assalomu alaykum, ${ctx.from.first_name}!*\n\n` +
-    `Men *Parkent Plants* ning raqamli yordamchisiman.\n` +
-    `Meva ko'chatlari bo'yicha eng mos navlarni tavsiya qilamiz 🌱\n\n` +
-    `Bir necha savol berishim kerak — atigi 1 daqiqa!\n\n` +
-    `👤 *Ismingizni* yozing:`,
-    { parse_mode: "Markdown" }
-  );
-});
+const MEVA_KB = kb([
+  [["🍎 Olma","M|Olma"],["🍑 Shaftoli","M|Shaftoli"],["🍒 Gilos","M|Gilos"]],
+  [["🫐 O'rik","M|Orik"],["🍐 Nok","M|Nok"],["🌰 Bodom","M|Bodom"]],
+  [["🍇 Uzum","M|Uzum"],["🍈 Anor","M|Anor"],["🌿 Boshqa","M|Boshqa"]],
+]);
 
-// ═══════════════════════════════════════════════════════════
-//  Xabar kelganda — bosqichga qarab javob qaytarish
-// ═══════════════════════════════════════════════════════════
-bot.on("message:text", async (ctx) => {
-  const matn     = ctx.message.text.trim();
-  const bosqich  = ctx.session.bosqich;
+const YIL_KB = kb([
+  [["2025","Y|2025"],["2026","Y|2026"],["2027","Y|2027"]],
+  [["2028","Y|2028"],["2029","Y|2029"],["2030","Y|2030"]],
+]);
 
-  // ── ISM ──────────────────────────────────────────────────
-  if (bosqich === BOSQICH.ISM) {
-    ctx.session.ism     = matn;
-    ctx.session.bosqich = BOSQICH.VILOYAT;
+async function getS(id) { return (await kv.get(`s:${id}`)) || {}; }
+async function setS(id, data) { await kv.set(`s:${id}`, data, { ex: 3600 }); }
+async function delS(id) { await kv.del(`s:${id}`); }
 
-    await ctx.reply(
-      `Juda yaxshi, *${matn}*! 👋\n\n📍 *Qaysi viloyatdasiz?*`,
-      { parse_mode: "Markdown" }
-    );
-  }
+module.exports = async (req, res) => {
+  if (req.method !== "POST") return res.send("Bot ishlayapti 🌿");
 
-  // ── VILOYAT ──────────────────────────────────────────────
-  else if (bosqich === BOSQICH.VILOYAT) {
-    ctx.session.viloyat = matn;
-    ctx.session.bosqich = BOSQICH.TUMAN;
+  try {
+    const body = req.body;
 
-    await ctx.reply(
-      `🏘️ *Tuman yoki shahar nomi?*\n_(Masalan: Parkent, Chirchiq, Uchtepa…)_`,
-      { parse_mode: "Markdown" }
-    );
-  }
+    if (body.message?.text === "/start") {
+      const id = body.message.from.id;
+      const firstName = body.message.from.first_name || "Do'st";
+      await setS(id, { step: "ism" });
+      await send(id,
+        `🌿 Assalomu alaykum, ${firstName}!\n\n` +
+        `Men Parkent Plants ning raqamli yordamchisiman 🌱\n` +
+        `Ko'chat tanlashda yordam beraman.\n\n` +
+        `👤 Ismingizni yozing:`
+      );
+      return res.json({ ok: true });
+    }
 
-  // ── TUMAN ────────────────────────────────────────────────
-  else if (bosqich === BOSQICH.TUMAN) {
-    ctx.session.tuman   = matn;
-    ctx.session.bosqich = BOSQICH.MEVA;
+    if (body.message?.text && !body.message.text.startsWith("/")) {
+      const id   = body.message.from.id;
+      const matn = body.message.text.trim();
+      const s    = await getS(id);
 
-    // Meva turlari tugmalari
-    const klaviatura = new Keyboard()
-      .text("🍎 Olma").text("🍑 Shaftoli").text("🍒 Gilos").row()
-      .text("🫐 O'rik").text("🍐 Nok").text("🌰 Bodom").row()
-      .text("🍇 Uzum").text("🍈 Anor").text("🌿 Boshqa")
-      .resized()
-      .oneTime();
+      if (s.step === "ism") {
+        await setS(id, { ...s, step: "viloyat", ism: matn });
+        await send(id, `👋 Yaxshi, ${matn}!\n\n📍 Viloyatingizni tanlang:`, { reply_markup: VILOYAT_KB });
 
-    await ctx.reply(
-      `🌳 *Qaysi meva daraxti ekmoqchisiz?*`,
-      { parse_mode: "Markdown", reply_markup: klaviatura }
-    );
-  }
+      } else if (s.step === "tuman") {
+        await setS(id, { ...s, step: "meva", tuman: matn });
+        await send(id, `✅ Tuman: ${matn}\n\n🌳 Qaysi meva ekmoqchisiz?`, { reply_markup: MEVA_KB });
 
-  // ── MEVA ─────────────────────────────────────────────────
-  else if (bosqich === BOSQICH.MEVA) {
-    ctx.session.meva    = matn;
-    ctx.session.bosqich = BOSQICH.YIL;
+      } else if (s.step === "telefon") {
+        const d = { ...s, telefon: matn };
+        await delS(id);
+        await send(id,
+          `✅ Rahmat, ${d.ism}!\n\n` +
+          `Ma'lumotlaringiz qabul qilindi.\n` +
+          `Mutaxassisimiz tez orada bog'lanadi 🌿\n\n_Yangi ariza: /start_`
+        );
+        await send(ADMIN_ID,
+          `🔔 YANGI MIJOZ ARIZASI\n` +
+          `──────────────────────────\n` +
+          `👤 Ism:      ${d.ism}\n` +
+          `🏙 Viloyat:  ${d.viloyat}\n` +
+          `🏘 Tuman:    ${d.tuman}\n` +
+          `🌳 Meva:     ${d.meva}\n` +
+          `📅 Yil:      ${d.yil}\n` +
+          `📞 Telefon:  ${d.telefon}\n` +
+          `──────────────────────────\n` +
+          `🆔 @${body.message.from.username || "—"} | ID: ${id}`
+        );
 
-    // Yillar tugmalari
-    const klaviatura = new Keyboard()
-      .text("2025").text("2026").text("2027").row()
-      .text("2028").text("2029").text("2030")
-      .resized()
-      .oneTime();
-
-    await ctx.reply(
-      `📅 *Qaysi yilda ekmoqchi bo'lgansiz?*`,
-      { parse_mode: "Markdown", reply_markup: klaviatura }
-    );
-  }
-
-  // ── YIL ──────────────────────────────────────────────────
-  else if (bosqich === BOSQICH.YIL) {
-    ctx.session.yil     = matn;
-    ctx.session.bosqich = BOSQICH.TELEFON;
-
-    const { removeKeyboard } = await import("grammy");
-
-    await ctx.reply(
-      `📞 *Telefon raqamingizni yuboring:*\n_(Masalan: +998901234567)_`,
-      {
-        parse_mode:   "Markdown",
-        reply_markup: { remove_keyboard: true },
+      } else {
+        await send(id, `Boshlash uchun /start yuboring 🌱`);
       }
-    );
-  }
 
-  // ── TELEFON — YAKUNLASH ───────────────────────────────────
-  else if (bosqich === BOSQICH.TELEFON) {
-    ctx.session.telefon = matn;
-    ctx.session.bosqich = null;
+      return res.json({ ok: true });
+    }
 
-    const d = ctx.session;
+    if (body.callback_query) {
+      const cq   = body.callback_query;
+      const id   = cq.from.id;
+      const data = cq.data;
+      const s    = await getS(id);
 
-    // 1) Mijozga tasdiqlash
-    await ctx.reply(
-      `✅ *Rahmat, ${d.ism}!*\n\n` +
-      `Ma'lumotlaringiz qabul qilindi.\n` +
-      `Parkent Plants mutaxassisi *tez orada* siz bilan bog'lanadi 🌿`,
-      {
-        parse_mode:   "Markdown",
-        reply_markup: { remove_keyboard: true },
+      await answer(cq.id);
+      await deleteMsg(id, cq.message.message_id);
+
+      if (data.startsWith("V|")) {
+        const viloyat = data.split("|")[1].replace(/_/g, " ");
+        await setS(id, { ...s, step: "tuman", viloyat });
+        await send(id, `✅ Viloyat: ${viloyat}\n\n🏘️ Tuman nomini yozing:\n_(Masalan: Parkent, Chirchiq…)_`);
+
+      } else if (data.startsWith("M|")) {
+        const meva = data.split("|")[1];
+        await setS(id, { ...s, step: "yil", meva });
+        await send(id, `✅ Meva: ${meva}\n\n📅 Qaysi yilda ekmoqchisiz?`, { reply_markup: YIL_KB });
+
+      } else if (data.startsWith("Y|")) {
+        const yil = data.split("|")[1];
+        await setS(id, { ...s, step: "telefon", yil });
+        await send(id, `✅ Yil: ${yil}\n\n📞 Telefon raqamingizni yozing:\n_(+998901234567)_`);
       }
-    );
 
-    // 2) Adminga to'liq ariza
-    const adminXabar =
-      `🔔 *YANGI MIJOZ ARIZASI*\n` +
-      `${"─".repeat(28)}\n` +
-      `👤 Ism:         ${d.ism}\n` +
-      `🏙 Viloyat:     ${d.viloyat}\n` +
-      `🏘 Tuman:       ${d.tuman}\n` +
-      `🌳 Meva turi:   ${d.meva}\n` +
-      `📅 Ekish yili:  ${d.yil}\n` +
-      `📞 Telefon:     ${d.telefon}\n` +
-      `${"─".repeat(28)}\n` +
-      `🆔 Telegram: @${ctx.from.username || "—"} (ID: ${ctx.from.id})`;
+      return res.json({ ok: true });
+    }
 
-    await ctx.api.sendMessage(process.env.ADMIN_ID, adminXabar, {
-      parse_mode: "Markdown",
-    });
+    res.json({ ok: true });
+
+  } catch (err) {
+    console.error(err);
+    res.status(200).json({ ok: false });
   }
-
-  // ── Bot nima qilishini bilmasa ────────────────────────────
-  else {
-    await ctx.reply(
-      `Boshlash uchun /start yuboring 🌱`,
-    );
-  }
-});
-
-// ═══════════════════════════════════════════════════════════
-//  Vercel handler — Telegramdan kelgan so'rovni qabul qiladi
-// ═══════════════════════════════════════════════════════════
-module.exports = webhookCallback(bot, "http");
+};
