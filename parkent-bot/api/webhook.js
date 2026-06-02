@@ -132,6 +132,19 @@ module.exports = async (req, res) => {
           `🆔 @${body.message.from.username || "—"} | ID: ${id}`
         );
 
+        // ── Leadni DOIMIY saqlash (rassilka uchun) ──────────────
+        // try/catch: saqlash xato bo'lsa ham mavjud oqim (admin xabari) buzilmaydi
+        try {
+          const lead = {
+            id, ism: d.ism, viloyat: d.viloyat, tuman: d.tuman, meva: d.meva,
+            yil: d.yil, maydon: d.maydon, reja_maydon: d.reja_maydon,
+            manba: d.manba, telefon: d.telefon,
+            username: body.message.from.username || "", ts: Date.now(),
+          };
+          await kv.set(`lead:${id}`, lead);   // har lead — alohida yozuv (muddatsiz)
+          await kv.sadd("leads", String(id)); // barcha lead chat_id lari to'plami
+        } catch (e) { console.error("lead save error:", e); }
+
       } else {
         await send(id, `Boshlash uchun /start yuboring 🌱`);
       }
