@@ -1,15 +1,29 @@
-const { kv } = require("@vercel/kv");
+// ═══════════════════════════════════════════════════════
+//  Parkent Plants — Telegram bot webhook (Supabase versiya)
+//  Saqlash: Supabase Postgres (bot_sessions, bot_leads)
+//  v3.0 — KV o'rniga Supabase + buglar tuzatildi
+// ═══════════════════════════════════════════════════════
+const { createClient } = require("@supabase/supabase-js");
 
 const TOKEN    = process.env.BOT_TOKEN;
 const ADMIN_ID = process.env.ADMIN_ID;
 const API      = `https://api.telegram.org/bot${TOKEN}`;
 
+const db = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_KEY,
+  { auth: { persistSession: false } }
+);
+
+// ── Telegram yordamchilari ──────────────────────────────
+// parse_mode ISHLATILMAYDI — shunda mijoz ismida _ * [ kabi belgi
+// bo'lsa ham xabar buzilmaydi/yo'qolmaydi (eski bug tuzatildi).
 async function send(chat_id, text, extra = {}) {
   await fetch(`${API}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ chat_id, text, parse_mode: "Markdown", ...extra }),
-  });
+    body: JSON.stringify({ chat_id, text, ...extra }),
+  }).catch(() => {});
 }
 
 async function answer(id) {
@@ -17,7 +31,7 @@ async function answer(id) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ callback_query_id: id }),
-  });
+  }).catch(() => {});
 }
 
 async function deleteMsg(chat_id, mid) {
@@ -66,15 +80,37 @@ const MANBA_KB = kb([
   [["🔎 Boshqa","MB|Boshqa"]],
 ]);
 
-async function getS(id) { return (await kv.get(`s:${id}`)) || {}; }
-async function setS(id, data) { await kv.set(`s:${id}`, data, { ex: 3600 }); }
-async function delS(id) { await kv.del(`s:${id}`); }
+// ── Sessiya (suhbat holati) — Supabase bot_sessions ─────
+async function getS(id) {
+  const { data } = await db.from("bot_sessions").select("data").eq("chat_id", id).maybeSingle();
+  return (data && data.data) || {};
+}
+async function setS(id, obj) {
+  await db.from("bot_sessions").upsert({
+    chat_id: id, step: obj.step || null, data: obj, updated_at: new Date().toISOString(),
+  });
+}
+async function delS(id) {
+  await db.from("bot_sessions").delete().eq("chat_id", id);
+}
 
+// ── Idempotency: bir update ikki marta ishlanmasin ──────
+// (Telegram timeout'da xabarni qayta yuborsa, dubl lead/xabar bo'lmaydi)
+async function alreadyProcessed(updateId) {
+  if (!updateId) return false;
+  const { error } = await db.from("bot_processed_updates").insert({ update_id: updateId });
+  if (error && error.code === "23505") return true;  // PK takror = oldin ishlangan
+  return false;                                       // boshqa xato bo'lsa — bloklamaymiz
+}
+
+// ════════════════════════════════════════════════════════
 module.exports = async (req, res) => {
   if (req.method !== "POST") return res.send("Bot ishlayapti 🌿");
 
   try {
     const body = req.body;
+
+    if (await alreadyProcessed(body.update_id)) return res.json({ ok: true });
 
     // /start
     if (body.message?.text === "/start") {
@@ -106,16 +142,32 @@ module.exports = async (req, res) => {
 
       } else if (s.step === "reja_maydon") {
         await setS(id, { ...s, step: "manba", reja_maydon: matn });
-        await send(id, `✅ Reja: ${matn}\n\n📣 Bizni qayerdan ko'rib yozyabsiz?`, { reply_markup: MANBA_KB });
+        await send(id, `✅ Reja: ${matn}\n\n📣 Bizni qayerdan ko'rib yozyapsiz?`, { reply_markup: MANBA_KB });
 
       } else if (s.step === "telefon") {
         const d = { ...s, telefon: matn };
+
+        // ── 1) AVVAL leadni saqlaymiz (eng muhim — yo'qolmasin) ──
+        try {
+          await db.from("bot_leads").insert({
+            chat_id: id, ism: d.ism, viloyat: d.viloyat, tuman: d.tuman, meva: d.meva,
+            yil: d.yil, maydon: d.maydon, reja_maydon: d.reja_maydon,
+            manba: d.manba, telefon: d.telefon,
+            username: body.message.from.username || null,
+          });
+        } catch (e) { console.error("lead save error:", e); }
+
         await delS(id);
+
+        // ── 2) Mijozga tasdiq ──
         await send(id,
           `✅ Rahmat, ${d.ism}!\n\n` +
           `Ma'lumotlaringiz qabul qilindi.\n` +
-          `Mutaxassisimiz tez orada bog'lanadi 🌿\n\n_Yangi ariza: /start_`
+          `Mutaxassisimiz tez orada bog'lanadi 🌿\n\n` +
+          `Yangi ariza: /start`
         );
+
+        // ── 3) Adminга xabar (parse_mode yo'q — hech qachon buzilmaydi) ──
         await send(ADMIN_ID,
           `🔔 YANGI MIJOZ ARIZASI\n` +
           `──────────────────────────\n` +
@@ -131,19 +183,6 @@ module.exports = async (req, res) => {
           `──────────────────────────\n` +
           `🆔 @${body.message.from.username || "—"} | ID: ${id}`
         );
-
-        // ── Leadni DOIMIY saqlash (rassilka uchun) ──────────────
-        // try/catch: saqlash xato bo'lsa ham mavjud oqim (admin xabari) buzilmaydi
-        try {
-          const lead = {
-            id, ism: d.ism, viloyat: d.viloyat, tuman: d.tuman, meva: d.meva,
-            yil: d.yil, maydon: d.maydon, reja_maydon: d.reja_maydon,
-            manba: d.manba, telefon: d.telefon,
-            username: body.message.from.username || "", ts: Date.now(),
-          };
-          await kv.set(`lead:${id}`, lead);   // har lead — alohida yozuv (muddatsiz)
-          await kv.sadd("leads", String(id)); // barcha lead chat_id lari to'plami
-        } catch (e) { console.error("lead save error:", e); }
 
       } else {
         await send(id, `Boshlash uchun /start yuboring 🌱`);
@@ -165,7 +204,7 @@ module.exports = async (req, res) => {
       if (data.startsWith("V|")) {
         const viloyat = data.split("|")[1].replace(/_/g, " ");
         await setS(id, { ...s, step: "tuman", viloyat });
-        await send(id, `✅ Viloyat: ${viloyat}\n\n🏘️ Tuman nomini yozing:\n_(Masalan: Parkent, Chirchiq…)_`);
+        await send(id, `✅ Viloyat: ${viloyat}\n\n🏘️ Tuman nomini yozing:\n(Masalan: Parkent, Chirchiq…)`);
 
       } else if (data.startsWith("M|")) {
         const meva = data.split("|")[1];
@@ -180,12 +219,12 @@ module.exports = async (req, res) => {
       } else if (data.startsWith("MD|")) {
         const maydon = data.split("|")[1].replace(/_/g, " ");
         await setS(id, { ...s, step: "reja_maydon", maydon });
-        await send(id, `✅ Maydon: ${maydon}\n\n🌱 Qancha maydonga bog' qilishni reja qilyabsiz?\n_(Masalan: 20 sotix, 2 gektar)_`);
+        await send(id, `✅ Maydon: ${maydon}\n\n🌱 Qancha maydonga bog' qilishni reja qilyapsiz?\n(Masalan: 20 sotix, 2 gektar)`);
 
       } else if (data.startsWith("MB|")) {
         const manba = data.split("|")[1];
         await setS(id, { ...s, step: "telefon", manba });
-        await send(id, `✅ Manba: ${manba}\n\n📞 Telefon raqamingizni yozing:\n_(+998901234567)_`);
+        await send(id, `✅ Manba: ${manba}\n\n📞 Telefon raqamingizni yozing:\n(+998901234567)`);
       }
 
       return res.json({ ok: true });
