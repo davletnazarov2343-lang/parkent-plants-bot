@@ -112,6 +112,28 @@ module.exports = async (req, res) => {
 
     if (await alreadyProcessed(body.update_id)) return res.json({ ok: true });
 
+    // /start KOD — deep-link (mavjud mijoz obunasi). KOD = mijoz telefoni (oxirgi 9 raqam).
+    if (body.message?.text?.startsWith("/start ")) {
+      const id = body.message.from.id;
+      const firstName = body.message.from.first_name || "Do'st";
+      const kod = body.message.text.slice(7).trim().slice(0, 32);
+      try {
+        await db.from("bot_subscribers").upsert({
+          kod, chat_id: id, name: firstName,
+          username: body.message.from.username || null,
+        }, { onConflict: "kod" });
+      } catch (e) { console.error("sub save error:", e); }
+      await send(id,
+        `🌿 Assalomu alaykum, ${firstName}!\n\n` +
+        `Parkent Plants kanaliga obuna bo'ldingiz ✅\n` +
+        `Endi buyurtmalaringiz, yangi navlar va siz uchun maxsus takliflar haqida shu yerda xabar berib turamiz 🌱`
+      );
+      await send(ADMIN_ID,
+        `✅ YANGI OBUNACHI\n👤 ${firstName} (@${body.message.from.username || "—"})\n🔑 Kod: ${kod}\n🆔 ID: ${id}`
+      );
+      return res.json({ ok: true });
+    }
+
     // /start
     if (body.message?.text === "/start") {
       const id = body.message.from.id;
