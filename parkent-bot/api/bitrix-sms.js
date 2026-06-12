@@ -93,7 +93,12 @@ module.exports = async (req, res) => {
       );
     }
 
-    return res.json({ ok: true });
+    return res.json({ ok: true, _debug: {
+      ct: req.headers["content-type"] || "",
+      keys: (b && typeof b === "object") ? Object.keys(b) : [],
+      typ: typeof req.body,
+      hasAuthId: !!b.AUTH_ID, hasDomain: !!b.DOMAIN, hasAuthObj: !!(b.auth),
+    }});
   } catch (e) {
     console.error("bitrix-sms error:", e);
     return res.status(200).json({ ok: false });
