@@ -56,7 +56,12 @@ async function sendSms(to, text) {
 module.exports = async (req, res) => {
   if (req.method !== "POST") return res.send("Parkent Bitrix SMS handler 🌿");
   try {
-    const b = req.body || {};
+    let b = req.body || {};
+    if (typeof b === "string") {
+      try { b = Object.fromEntries(new URLSearchParams(b)); } catch (e) {}
+    }
+    console.log("BITRIX hit | CT:", req.headers["content-type"], "| keys:",
+      (b && typeof b === "object" ? Object.keys(b) : []).join(","));
 
     // 1) SMS YUBORISH so'rovi (Bitrix -> biz)
     if (b.message_to && b.message_body) {
