@@ -12,13 +12,16 @@ const SENDER_CODE = "parkent_telerivet";
 const SENDER_NAME = "Parkent SMS";
 const HANDLER_URL = "https://parkent-plants-bot-r7s5.vercel.app/api/bitrix-sms";
 
-// Bitrix auth ikki ko'rinishda keladi: event (auth:{...}) yoki iframe (AUTH_ID/DOMAIN)
+const PORTAL_REST = "https://norchontol.bitrix24.kz/rest/";
+// Bitrix auth: event (auth:{...}) yoki handler POST (AUTH_ID + CLIENT_ENDPOINT/DOMAIN/portal)
 function getAuth(b) {
   if (b.auth && b.auth.access_token) {
-    return { token: b.auth.access_token, base: b.auth.client_endpoint || `https://${b.auth.domain}/rest/` };
+    const base = b.auth.client_endpoint || (b.auth.domain ? `https://${b.auth.domain}/rest/` : PORTAL_REST);
+    return { token: b.auth.access_token, base };
   }
-  if (b.AUTH_ID && b.DOMAIN) {
-    return { token: b.AUTH_ID, base: `https://${b.DOMAIN}/rest/` };
+  if (b.AUTH_ID) {
+    const base = b.CLIENT_ENDPOINT || (b.DOMAIN ? `https://${b.DOMAIN}/rest/` : PORTAL_REST);
+    return { token: b.AUTH_ID, base };
   }
   return null;
 }
@@ -80,9 +83,10 @@ module.exports = async (req, res) => {
     // 2) O'RNATISH / handshake -> sender'ni ro'yxatga olish
     const auth = getAuth(b);
     if (auth) {
-      await bitrix(auth, "messageservice.sender.add", {
+      const r = await bitrix(auth, "messageservice.sender.add", {
         CODE: SENDER_CODE, TYPE: "SMS", HANDLER: HANDLER_URL, NAME: SENDER_NAME,
-      }).catch(() => {});
+      }).catch((e) => ({ error: String(e) }));
+      console.log("sender.add result:", JSON.stringify(r).slice(0, 300));
       // iframe o'rnatishini tugatish (UI app)
       res.setHeader("Content-Type", "text/html; charset=utf-8");
       return res.send(
@@ -93,12 +97,7 @@ module.exports = async (req, res) => {
       );
     }
 
-    return res.json({ ok: true, _debug: {
-      ct: req.headers["content-type"] || "",
-      keys: (b && typeof b === "object") ? Object.keys(b) : [],
-      typ: typeof req.body,
-      hasAuthId: !!b.AUTH_ID, hasDomain: !!b.DOMAIN, hasAuthObj: !!(b.auth),
-    }});
+    return res.json({ ok: true });
   } catch (e) {
     console.error("bitrix-sms error:", e);
     return res.status(200).json({ ok: false });
