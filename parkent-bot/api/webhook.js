@@ -105,7 +105,7 @@ async function alreadyProcessed(updateId) {
 
 // ════════════════════════════════════════════════════════
 module.exports = async (req, res) => {
-  if (req.method !== "POST") return res.json({ ok: true, url: String(process.env.SUPABASE_URL || "NONE"), keylen: (process.env.SUPABASE_SERVICE_KEY || "").length });
+  if (req.method !== "POST") return res.send("Bot ishlayapti 🌿");
 
   try {
     const body = req.body;
