@@ -75,10 +75,17 @@ module.exports = async (req, res) => {
     // 2) O'RNATISH / handshake -> sender'ni ro'yxatga olish
     const auth = getAuth(b);
     if (auth) {
-      const r = await bitrix(auth, "messageservice.sender.add", {
+      await bitrix(auth, "messageservice.sender.add", {
         CODE: SENDER_CODE, TYPE: "SMS", HANDLER: HANDLER_URL, NAME: SENDER_NAME,
-      });
-      return res.json({ ok: true, sender_add: r });
+      }).catch(() => {});
+      // iframe o'rnatishini tugatish (UI app)
+      res.setHeader("Content-Type", "text/html; charset=utf-8");
+      return res.send(
+        `<!DOCTYPE html><html><head><meta charset="utf-8">` +
+        `<script src="//api.bitrix24.com/api/v1/"></script></head>` +
+        `<body><script>try{BX24.init(function(){BX24.installFinish();});}catch(e){}</script>` +
+        `Parkent SMS o'rnatildi ✅</body></html>`
+      );
     }
 
     return res.json({ ok: true });
